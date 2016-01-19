@@ -17,6 +17,10 @@ from peewee import sqlite3 as _sqlite3
 from playhouse.sqlite_ext import *
 
 
+if sys.version_info[0] == 3:
+    basestring = str
+
+
 USE_JSON_FALLBACK = True
 if _sqlite3.sqlite_version_info >= (3, 9, 0):
     conn = _sqlite3.connect(':memory:')
@@ -82,7 +86,37 @@ def clean(s):
     return re.sub('[^\w]+', '', s)
 
 
+def row_iterator(keyspace, query):
+    curr = None
+    accum = {}
+    for row_key, column, value in query:
+        if curr is None:
+            curr = row_key
+        if row_key != curr:
+            row = Row(
+                keyspace=keyspace,
+                identifier=curr,
+                **accum)
+            curr = row_key
+            yield row
+            accum = {}
+        accum[column] = value
+    if accum:
+        yield Row(keyspace=keyspace, identifier=row_key, **accum)
+
+
 class Index(object):
+    _op_map = {
+        '<': operator.lt,
+        '<=': operator.le,
+        '==': operator.eq,
+        '>=': operator.ge,
+        '>': operator.gt,
+        '!=': operator.ne,
+        'LIKE': operator.pow,
+        'IN': operator.lshift,
+    }
+
     def __init__(self, column, path):
         self.column = column
         self.path = path
@@ -158,6 +192,10 @@ class Index(object):
                                                (self.name, name))
 
     def query(self, value, operation=operator.eq):
+        # Support string operations in addition to functional, for readability.
+        if isinstance(operation, basestring):
+            operation = self._op_map[operation]
+
         model = self.keyspace.model
         query = (model
                  .select(
@@ -174,23 +212,8 @@ class Index(object):
                  .order_by(model.row_key, model.timestamp.desc())
                  .tuples())
 
-        curr = None
-        accum = {}
-        for row_key, column, value in query:
-            if curr is None:
-                curr = row_key
-            if row_key != curr:
-                row = Row(
-                    keyspace=self.keyspace,
-                    identifier=curr,
-                    **accum)
-                curr = row_key
-                yield row
-                accum = {}
-            accum[column] = value
-        if accum:
-            yield Row(keyspace=self.keyspace, identifier=row_key, **accum)
-
+        for row in row_iterator(self.keyspace, query):
+            yield row
 
 class KeySpace(object):
     def __init__(self, database, name, *indexes):
@@ -268,6 +291,20 @@ class KeySpace(object):
 
     def atomic(self):
         return self.database.atomic()
+
+    def all(self):
+        query = (self.model
+                 .select(
+                     self.model.row_key,
+                     self.model.column,
+                     self.model.value)
+                 .group_by(
+                     self.model.row_key,
+                     self.model.column)
+                 .order_by(self.model.row_key, self.model.timestamp.desc())
+                 .tuples())
+        for row in row_iterator(self, query):
+            yield row
 
 
 class Row(object):
@@ -421,6 +458,18 @@ class TestKeySpace(unittest.TestCase):
 
         h_db = self.keyspace[huey.identifier]
         self.assertIsNone(h_db['fur'])
+
+    def test_all(self):
+        for i in range(1, 5):
+            self.keyspace.create_row(**{'k1': 'v1-%s' % i, 'k2': 'v2-%s' % i})
+
+        rows = [row for row in self.keyspace.all()]
+        self.assertEqual([row._data for row in rows], [
+            {'k1': 'v1-1', 'k2': 'v2-1'},
+            {'k1': 'v1-2', 'k2': 'v2-2'},
+            {'k1': 'v1-3', 'k2': 'v2-3'},
+            {'k1': 'v1-4', 'k2': 'v2-4'},
+        ])
 
     def test_preload(self):
         r1 = self.keyspace.create_row()
