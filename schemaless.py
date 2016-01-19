@@ -1,8 +1,33 @@
 """
 SQLite-Schemaless
 
-Data is stored in a single SQLite database, which can be either on-disk or
-in-memory.
+Schemaless database built on top of SQLite. I based the design of
+`sqlite-schemaless` on the data-store described an Uber engineering post
+(https://eng.uber.com/schemaless-part-one/). All data is stored in a single
+SQLite database, which can either be on-disk or in-memory.
+
+Data is organized by *KeySpace*. A KeySpace might be something like "users"
+or "tweets". Inside each KeySpace there are *Rows*. A row is identified by an
+integer `row_key` and consists of one or more named columns. In these columns
+you can store arbitrary JSON blobs. So:
+
+* KeySpace1:
+    * Row1:
+        * ColumnA: {arbitrary json data}
+        * ColumnB: {more json data}
+    * Row2:
+        * ColumnA: {json data}
+        * ColumnC: {json data}
+    * Row3:
+        * ColumnA: {json data}
+        * ColumnB: {json data}
+
+You can create indexes on values stored in the JSON column data, then the
+secondary indexes can be used to construct queries based on values nested in
+the JSON blobs.
+
+`sqlite-schemaless` also allows you to bind event handlers that will execute
+whenever data is inserted or updated in a keyspace.
 """
 import operator
 import re
