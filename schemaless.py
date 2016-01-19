@@ -275,7 +275,7 @@ class KeySpace(object):
         return type(self.name, (BaseModel,), {'Meta': Meta})
 
     def create(self):
-        self.model.create_table()
+        self.model.create_table(True)
         self._create_trigger()
         for index in self.indexes:
             index._create_triggers()
@@ -361,16 +361,15 @@ class Row(object):
         return data
 
     def multi_set(self, data):
-        with self.keyspace.atomic():
-            if not self.identifier:
-                self.identifier = (self.model
-                              .select(fn.COALESCE(
-                                  fn.MAX(self.model.row_key) + 1,
-                                  1))
-                              .scalar())
-            self.model.insert_many(rows=[
-                {'column': key, 'value': value, 'row_key': self.identifier}
-                for key, value in data.items()]).execute()
+        if not self.identifier:
+            self.identifier = (self.model
+                          .select(fn.COALESCE(
+                              fn.MAX(self.model.row_key) + 1,
+                              1))
+                          .scalar())
+        self.model.insert_many(rows=[
+            {'column': key, 'value': value, 'row_key': self.identifier}
+            for key, value in data.items()]).execute()
 
     def __setitem__(self, key, value):
         if self.identifier:
