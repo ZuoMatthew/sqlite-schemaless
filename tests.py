@@ -191,18 +191,32 @@ class TestKeySpace(unittest.TestCase):
             'misc': {'foo': 'baze'},
         })
 
-    def populate_test_index(self):
+    def populate_test_index(self, *indexes):
         idx = Index('data', '$.k1')
-        keyspace = self.db.keyspace('test3', idx)
+        keyspace = self.db.keyspace('test3', idx, *indexes)
         keyspace.create()
 
         keyspace.create_row(data={'k1': 'v1-1'}, misc=1337)
-        keyspace.create_row(data={'k1': 'v1-2'})
+        keyspace.create_row(data={'k1': 'v1-2', 'k2': 'x1-2'})
         keyspace.create_row(data={'k1': 'v1-3'}, k1='v1-5', k2='v1-6')
-        keyspace.create_row(data={'k1': 'xx'})
+        keyspace.create_row(data={'k1': 'xx', 'k2': 'x1-xx'})
         keyspace.create_row(data={'k2': 'v1-x'})
         keyspace.create_row(data={'k1': 'v1-4', 'k2': 'v1-y'})
         return idx
+
+    def test_query_expressions(self):
+        idx2 = Index('data', '$.k2')
+        idx = self.populate_test_index(idx2)
+
+        query = idx.query('v1-1') | idx.query('v1-3') | idx.query('xx')
+        self.assertEqual([row._data['data']['k1'] for row in query], [
+            'v1-1',
+            'v1-3',
+            'xx'])
+
+        query = (idx.query('v1-1') | idx.query('v1-3')) | idx2.query('x1-xx')
+        import ipdb; ipdb.set_trace()
+        rows = [row for row in query]
 
     def test_multi_index(self):
         idx = self.populate_test_index()
@@ -216,7 +230,7 @@ class TestKeySpace(unittest.TestCase):
         # All columns are fetched.
         self.assertEqual([row._data for row in rows], [
             {'data': {'k1': 'v1-1'}, 'misc': 1337},
-            {'data': {'k1': 'v1-2'}},
+            {'data': {'k1': 'v1-2', 'k2': 'x1-2'}},
             {'data': {'k1': 'v1-3'}, 'k1': 'v1-5', 'k2': 'v1-6'},
             {'data': {'k1': 'v1-4', 'k2': 'v1-y'}},
         ])

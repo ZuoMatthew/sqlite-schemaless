@@ -129,6 +129,61 @@ def row_iterator(keyspace, query):
         yield Row(keyspace=keyspace, identifier=row_key, **accum)
 
 
+class IndexQuery(object):
+    def __init__(self, index, expression, operations=None):
+        self.index = index
+        self.expression = expression
+        self.query_operations = operations or []
+
+    def clone(self):
+        return IndexQuery(
+            self.index,
+            self.expression,
+            list(self.query_operations))
+
+    def __or__(self, rhs):
+        clone = self.clone()
+        if rhs.index.name == self.index.name:
+            clone.expression = (clone.expression | rhs.expression)
+        else:
+            clone.query_operations.append((operator.or_, rhs))
+        return clone
+
+    def __and__(self, rhs):
+        clone = self.clone()
+        if rhs.index == self.index:
+            clone.expression = (clone.expression & rhs.expression)
+        else:
+            clone.query_operations.append((operator.and_, rhs))
+        return clone
+
+    def query(self):
+        model = self.index.keyspace.model
+        query = (model
+                 .select(
+                     model.row_key,
+                     model.column,
+                     model.value)
+                 .join(
+                     self.index.model,
+                     on=(self.index.model.row_key == model.row_key))
+                 .where(self.expression)
+                 .group_by(
+                     model.row_key,
+                     model.column)
+                 .order_by(model.row_key, model.timestamp.desc()))
+
+        for op, idx_query in self.query_operations:
+            query = op(query, idx_query.query())
+
+        return query
+
+    def __iter__(self):
+        query = self.query()
+        for row in row_iterator(self.index.keyspace, query.tuples()):
+            yield row
+
+
 class Index(object):
     _op_map = {
         '<': operator.lt,
@@ -219,25 +274,19 @@ class Index(object):
         # Support string operations in addition to functional, for readability.
         if isinstance(operation, basestring):
             operation = self._op_map[operation]
+        return IndexQuery(self, operation(self.model.value, value))
 
-        model = self.keyspace.model
-        query = (model
-                 .select(
-                     model.row_key,
-                     model.column,
-                     model.value)
-                 .join(
-                     self.model,
-                     on=(self.model.row_key == model.row_key))
-                 .where(operation(self.model.value, value))
-                 .group_by(
-                     model.row_key,
-                     model.column)
-                 .order_by(model.row_key, model.timestamp.desc())
-                 .tuples())
+    def _e(op):
+        def inner(self, rhs):
+            return self.query(rhs, op)
+        return inner
+    __eq__ = _e('==')
+    __ne__ = _e('!=')
+    __gt__ = _e('>')
+    __ge__ = _e('>=')
+    __lt__ = _e('<')
+    __le__ = _e('<=')
 
-        for row in row_iterator(self.keyspace, query):
-            yield row
 
 class KeySpace(object):
     def __init__(self, database, name, *indexes):
