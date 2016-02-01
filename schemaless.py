@@ -130,16 +130,18 @@ def row_iterator(keyspace, query):
 
 
 class IndexQuery(object):
-    def __init__(self, index, expression, operations=None):
+    def __init__(self, index, expression, operations=None, reverse=False):
         self.index = index
         self.expression = expression
+        self.reverse = reverse
         self.query_operations = operations or []
 
     def clone(self):
         return IndexQuery(
             self.index,
             self.expression,
-            list(self.query_operations))
+            list(self.query_operations),
+            self.reverse)
 
     def __or__(self, rhs):
         clone = self.clone()
@@ -179,7 +181,10 @@ class IndexQuery(object):
 
     def __iter__(self):
         query = self.query()
-        query = query.order_by(SQL('1'))
+        if self.reverse:
+            query = query.order_by(SQL('1 DESC'))
+        else:
+            query = query.order_by(SQL('1'))
         for row in row_iterator(self.index.keyspace, query.tuples()):
             yield row
 
@@ -275,13 +280,14 @@ class Index(object):
             self.keyspace.database.execute_sql('DROP TRIGGER IF EXISTS %s%s' %
                                                (self.name, name))
 
-    def query(self, value, operation=operator.eq):
+    def query(self, value, operation=operator.eq, reverse=False):
         # Support string operations in addition to functional, for readability.
         if isinstance(value, Expression):
-            return IndexQuery(self, value)
+            return IndexQuery(self, value, reverse=reverse)
         if isinstance(operation, basestring):
             operation = self._op_map[operation]
-        return IndexQuery(self, operation(self.model.value, value))
+        expression = operation(self.model.value, value)
+        return IndexQuery(self, expression, reverse=reverse)
 
     def _e(op):
         def inner(self, rhs):

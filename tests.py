@@ -262,6 +262,12 @@ class TestKeySpace(unittest.TestCase):
             {'data': {'k1': 'v1-3'}, 'k1': 'v1-5', 'k2': 'v1-6'},
         ])
 
+        query = idx.query((idx.v == 'v1-1') | (idx.v == 'v1-3'), reverse=True)
+        self.assertEqual([row._data for row in query], [
+            {'data': {'k1': 'v1-3'}, 'k1': 'v1-5', 'k2': 'v1-6'},
+            {'data': {'k1': 'v1-1'}, 'misc': 1337},
+        ])
+
     def test_multi_index(self):
         idx = self.populate_test_index()
 
