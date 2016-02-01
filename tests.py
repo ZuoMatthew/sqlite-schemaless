@@ -69,6 +69,39 @@ class TestKeySpace(unittest.TestCase):
         h_db = self.keyspace[huey.identifier]
         self.assertIsNone(h_db['fur'])
 
+    def test_upsert(self):
+        Model = self.keyspace.model
+        charlie = self.keyspace.create_row()
+
+        # First write will allocate an identifier.
+        charlie['name'] = 'charlie'
+        self.assertEqual(charlie.identifier, 1)
+        self.assertEqual(Model.select().count(), 1)
+
+        charlie['country'] = 'US'
+        charlie['state'] = 'KS'
+        self.assertEqual(Model.select().count(), 3)
+
+        # Test upsert.
+        charlie['state'] = 'Kansas'
+        self.assertEqual(Model.select().count(), 3)
+
+        value = (Model
+                 .select(Model.value)
+                 .where(Model.column == 'state')
+                 .scalar(convert=True))
+        self.assertEqual(value, 'Kansas')
+
+        for i in range(10):
+            charlie['count'] = i
+
+        self.assertEqual(Model.select().count(), 4)
+        value = (Model
+                 .select(Model.value)
+                 .where(Model.column == 'count')
+                 .scalar(convert=True))
+        self.assertEqual(value, 9)
+
     def test_all(self):
         for i in range(1, 5):
             self.keyspace.create_row(**{'k1': 'v1-%s' % i, 'k2': 'v2-%s' % i})
@@ -215,8 +248,19 @@ class TestKeySpace(unittest.TestCase):
             'xx'])
 
         query = (idx.query('v1-1') | idx.query('v1-3')) | idx2.query('x1-xx')
-        import ipdb; ipdb.set_trace()
-        rows = [row for row in query]
+        self.assertEqual([row._data['data'] for row in query], [
+            {'k1': 'v1-1'},
+            {'k1': 'v1-3'},
+            {'k1': 'xx', 'k2': 'x1-xx'},
+        ])
+
+    def test_query_descriptor(self):
+        idx = self.populate_test_index()
+        query = idx.query((idx.v == 'v1-1') | (idx.v == 'v1-3'))
+        self.assertEqual([row._data for row in query], [
+            {'data': {'k1': 'v1-1'}, 'misc': 1337},
+            {'data': {'k1': 'v1-3'}, 'k1': 'v1-5', 'k2': 'v1-6'},
+        ])
 
     def test_multi_index(self):
         idx = self.populate_test_index()
@@ -260,8 +304,7 @@ class TestKeySpace(unittest.TestCase):
         row = keyspace[2]
         row.delete()
 
-        row = keyspace[4]
-        row.delete()
+        del keyspace[4]
 
         all_items = [item for item in idx.all_items()]
         self.assertEqual(all_items, [
@@ -283,16 +326,24 @@ class TestKeySpace(unittest.TestCase):
 
         keyspace.create_row(data={'k1': 'v1'})
         keyspace.create_row(data={'k2': 'v2'})
-        keyspace.create_row(data={'k3': 'v3'})
+        keyspace.create_row(data={'k3': 'v3', 'x3': 'y3'})
         self.assertEqual(accum, [
             (1, 'data', {'k1': 'v1'}),
             (2, 'data', {'k2': 'v2'}),
-            (3, 'data', {'k3': 'v3'}),
+            (3, 'data', {'k3': 'v3', 'x3': 'y3'}),
         ])
 
+        # Multiple columns correspond to multiple events.
+        keyspace.create_row(col1='val1', col2='val2')
+        self.assertEqual(len(accum), 5)
+        col1, col2 = sorted(accum[3:])
+        self.assertEqual(col1, (4, 'col1', 'val1'))
+        self.assertEqual(col2, (4, 'col2', 'val2'))
+
+        # After unbinding, no more events.
         handler.unbind()
         keyspace.create_row(data={'k4': 'v4'})
-        self.assertEqual(len(accum), 3)
+        self.assertEqual(len(accum), 5)
 
     def test_json_extract_fallback(self):
         data = {

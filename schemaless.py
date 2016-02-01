@@ -170,8 +170,7 @@ class IndexQuery(object):
                  .where(self.expression)
                  .group_by(
                      model.row_key,
-                     model.column)
-                 .order_by(model.row_key, model.timestamp.desc()))
+                     model.column))
 
         for op, idx_query in self.query_operations:
             query = op(query, idx_query.query())
@@ -180,8 +179,16 @@ class IndexQuery(object):
 
     def __iter__(self):
         query = self.query()
+        query = query.order_by(SQL('1'))
         for row in row_iterator(self.index.keyspace, query.tuples()):
             yield row
+
+
+class _QueryDescriptor(object):
+    def __get__(self, instance, instance_type=None):
+        if instance:
+            return instance.model.value
+        return self
 
 
 class Index(object):
@@ -212,7 +219,7 @@ class Index(object):
 
     def get_model_class(self):
         class BaseModel(Model):
-            row_key = IntegerField(index=True)
+            row_key = IntegerField(unique=True)
             value = TextField(null=True)
 
             class Meta:
@@ -239,9 +246,7 @@ class Index(object):
             'new.column = \'%(column)s\' AND '
             'json_extract(new.value, \'%(path)s\') IS NOT NULL) '
             'BEGIN '
-            'DELETE FROM %(index)s '
-            'WHERE row_key = new.row_key; '
-            'INSERT INTO %(index)s (row_key, value) '
+            'INSERT OR REPLACE INTO %(index)s (row_key, value) '
             'VALUES (new.row_key, json_extract(new.value, \'%(path)s\')); '
             'END') % {
                 'trigger_name': trigger_name,
@@ -272,6 +277,8 @@ class Index(object):
 
     def query(self, value, operation=operator.eq):
         # Support string operations in addition to functional, for readability.
+        if isinstance(value, Expression):
+            return IndexQuery(self, value)
         if isinstance(operation, basestring):
             operation = self._op_map[operation]
         return IndexQuery(self, operation(self.model.value, value))
@@ -286,6 +293,8 @@ class Index(object):
     __ge__ = _e('>=')
     __lt__ = _e('<')
     __le__ = _e('<=')
+
+    v = _QueryDescriptor()
 
 
 class KeySpace(object):
@@ -317,6 +326,9 @@ class KeySpace(object):
 
             class Meta:
                 database = self.database
+                indexes = (
+                    (('row_key', 'column'), True),
+                )
 
         class Meta:
             db_table = self.db_table
@@ -355,6 +367,10 @@ class KeySpace(object):
 
     def __getitem__(self, identifier):
         return Row(self, identifier)
+
+    def __delitem__(self, identifier):
+        row = Row(self, identifier)
+        return row.delete()
 
     def get_row(self, identifier, preload=None):
         return Row(self, identifier, preload=preload)
@@ -428,14 +444,19 @@ class Row(object):
                 self.model.select(fn.MAX(self.model.row_key) + 1),
                 1)
 
-        model = self.model.create(
-            row_key=row_key,
-            column=key,
-            value=value)
+        query = (self.model
+                 .insert(
+                     row_key=row_key,
+                     column=key,
+                     value=value,
+                     timestamp=time.time())
+                 .on_conflict('REPLACE'))
+        rowid = query.execute()
+
         if not self.identifier:
             self.identifier = (self.model
                                .select(self.model.row_key)
-                               .where(self.model.id == model.id)
+                               .where(self.model.id == rowid)
                                .limit(1)
                                .scalar())
         self._data[key] = value
