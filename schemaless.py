@@ -143,6 +143,11 @@ class IndexQuery(object):
             list(self.query_operations),
             self.reverse)
 
+    def __neg__(self):
+        clone = self.clone()
+        clone.reverse = not self.reverse
+        return clone
+
     def __or__(self, rhs):
         clone = self.clone()
         if rhs.index.name == self.index.name:
@@ -280,6 +285,20 @@ class Index(object):
             self.keyspace.database.execute_sql('DROP TRIGGER IF EXISTS %s%s' %
                                                (self.name, name))
 
+    def _populate(self):
+        query = (
+            'INSERT INTO %(index)s (row_key, value) '
+            'SELECT k.row_key, json_extract(k.value, \'%(path)s\') '
+            'FROM %(keyspace)s AS k '
+            'WHERE ('
+            'k.column = ? AND '
+            'json_extract(k.value, \'%(path)s\') IS NOT NULL)') % {
+                'keyspace': self.keyspace.db_table,
+                'index': self.db_table,
+                'column': self.column,
+                'path': self.path}
+        self.keyspace.database.execute_sql(query, (self.column,))
+
     def query(self, value, operation=operator.eq, reverse=False):
         # Support string operations in addition to functional, for readability.
         if isinstance(value, Expression):
@@ -313,6 +332,13 @@ class KeySpace(object):
         for index in indexes:
             index.bind(self)
             self.indexes.append(index)
+
+    def add_index(self, index):
+        # Add index to existing KeySpace.
+        index.bind(self)
+        index._create_triggers()
+        index._populate()
+        self.indexes.append(index)
 
     def handler(self, fn):
         def wrapper(table, row_key, column, value):
@@ -496,3 +522,18 @@ class Row(object):
                 .delete()
                 .where(self.model.row_key == self.identifier)
                 .execute())
+
+    def keys(self):
+        if self.identifier and not self._data:
+            self.multi_get(True)
+        return self._data.keys()
+
+    def values(self):
+        if self.identifier and not self._data:
+            self.multi_get(True)
+        return self._data.values()
+
+    def items(self):
+        if self.identifier and not self._data:
+            self.multi_get(True)
+        return self._data.items()

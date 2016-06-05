@@ -255,7 +255,8 @@ class TestKeySpace(unittest.TestCase):
         ])
 
     def test_query_descriptor(self):
-        idx = self.populate_test_index()
+        idx2 = Index('data', '$.k2')
+        idx = self.populate_test_index(idx2)
         query = idx.query((idx.v == 'v1-1') | (idx.v == 'v1-3'))
         self.assertEqual([row._data for row in query], [
             {'data': {'k1': 'v1-1'}, 'misc': 1337},
@@ -266,6 +267,14 @@ class TestKeySpace(unittest.TestCase):
         self.assertEqual([row._data for row in query], [
             {'data': {'k1': 'v1-3'}, 'k1': 'v1-5', 'k2': 'v1-6'},
             {'data': {'k1': 'v1-1'}, 'misc': 1337},
+        ])
+
+        idx1_q = idx.query((idx.v == 'v1-1') | (idx.v == 'v1-3'))
+        idx2_q = idx2.query(idx2.v == 'x1-xx')
+        self.assertEqual([row._data['data'] for row in -(idx1_q | idx2_q)], [
+            {'k1': 'xx', 'k2': 'x1-xx'},
+            {'k1': 'v1-3'},
+            {'k1': 'v1-1'},
         ])
 
     def test_multi_index(self):
@@ -317,6 +326,20 @@ class TestKeySpace(unittest.TestCase):
             {'row_key': 1, 'value': 'v1-1'},
             {'row_key': 3, 'value': 'v1-3'},
             {'row_key': 6, 'value': 'v1-4'},
+        ])
+
+    def test_index_populate(self):
+        idx = self.populate_test_index()
+        keyspace = idx.keyspace
+
+        idx2 = Index('data', '$.k2')
+        keyspace.add_index(idx2)
+
+        self.assertEqual([row for row in idx2.all_items()], [
+            {'row_key': 2, 'value': u'x1-2'},
+            {'row_key': 4, 'value': u'x1-xx'},
+            {'row_key': 5, 'value': u'v1-x'},
+            {'row_key': 6, 'value': u'v1-y'},
         ])
 
     def test_signal_handler(self):
