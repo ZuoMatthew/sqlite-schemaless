@@ -7,7 +7,7 @@ f.close()
 
 setup(
     name='sqlite-schemaless',
-    version='0.1.1',
+    version='0.1.2',
     description='schemaless database on top of sqlite',
     long_description=readme,
     author='Charles Leifer',
